@@ -1,0 +1,28 @@
+{
+  "name": "drawing-playground",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node-http-server",
+    "start-build": "bsb -make-world -w",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Schmavery/drawing-playground.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Schmavery/drawing-playground/issues"
+  },
+  "homepage": "https://github.com/Schmavery/drawing-playground#readme",
+  "devDependencies": {
+    "bs-platform": "^2.2.3",
+    "node-http-server": "^8.1.2"
+  },
+  "dependencies": {
+    "reason-react": "^0.3.4"
+  }
+}
