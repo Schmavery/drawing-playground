@@ -9,6 +9,7 @@ var React = require("react");
 var Js_exn = require("bs-platform/lib/js/js_exn.js");
 var Printf = require("bs-platform/lib/js/printf.js");
 var $$String = require("bs-platform/lib/js/string.js");
+var Caml_array = require("bs-platform/lib/js/caml_array.js");
 var ReasonReact = require("reason-react/src/ReasonReact.js");
 
 function filteri(f, lst) {
@@ -37,11 +38,17 @@ function filteri(f, lst) {
 
 var component = ReasonReact.reducerComponent("Page");
 
+function handleTopLevel($$event, self) {
+  var target = $$event.target;
+  var content = target.value;
+  return Curry._1(self[/* send */4], /* UpdateTopLevelAndCompile */Block.__(1, [content]));
+}
+
 function handleText(codeNum, $$event, self) {
   var target = $$event.target;
   var content = target.value;
   if (content === "") {
-    return Curry._1(self[/* send */4], /* DeleteTextBox */Block.__(1, [codeNum]));
+    return Curry._1(self[/* send */4], /* DeleteTextBox */Block.__(2, [codeNum]));
   } else {
     return Curry._1(self[/* send */4], /* UpdateAndCompile */Block.__(0, [
                   codeNum,
@@ -50,32 +57,39 @@ function handleText(codeNum, $$event, self) {
   }
 }
 
-var preamble = "\ntype rowT = {width: int, height: int, color: string};\ntype svgRectT = {x: int, y: int, w: int, h: int, c: string};\nlet processRow = (row: rowT) : svgRectT => { row\n";
+var preamble = "\ntype rowT = {width: int, height: int, color: string};\ntype svgRectT = {x: int, y: int, w: int, h: int, c: string};\n";
 
-function processRow() {
-  return 4;
-}
-
-function wrapFunction(body) {
-  return Curry._1(Printf.sprintf(/* Format */[
+function wrapFunction(fn) {
+  return Curry._2(Printf.sprintf(/* Format */[
                   /* String_literal */Block.__(11, [
-                      "|> ((x) => {",
+                      "let ",
                       /* String */Block.__(2, [
                           /* No_padding */0,
                           /* String_literal */Block.__(11, [
-                              "})",
-                              /* End_of_format */0
+                              " = (x) => {",
+                              /* String */Block.__(2, [
+                                  /* No_padding */0,
+                                  /* String_literal */Block.__(11, [
+                                      "};",
+                                      /* End_of_format */0
+                                    ])
+                                ])
                             ])
                         ])
                     ]),
-                  "|> ((x) => {%s})"
-                ]), body);
+                  "let %s = (x) => {%s};"
+                ]), fn[/* name */0], fn[/* body */1]);
+}
+
+function suffix(topLevel) {
+  return "\nlet processTable = (table: array(rowT)) : array(svgRectT) => {" + (topLevel + "}");
 }
 
 function doCompile(state) {
   console.log("Compiling...");
-  var reason_code = $$String.concat("\n", List.map(wrapFunction, state[/* textList */0]));
-  var wrapped_code = preamble + (reason_code + "}");
+  var reason_code = $$String.concat("\n", List.map(wrapFunction, state[/* fnList */1]));
+  var wrapped_code = preamble + (reason_code + suffix(state[/* topLevel */0]));
+  console.log(wrapped_code);
   var maybeRE;
   try {
     maybeRE = /* Ok */Block.__(0, [parseRE(wrapped_code)]);
@@ -91,10 +105,11 @@ function doCompile(state) {
   }
   if (maybeRE.tag) {
     return /* record */[
-            /* textList */state[/* textList */0],
+            /* topLevel */state[/* topLevel */0],
+            /* fnList */state[/* fnList */1],
             /* error : Some */[maybeRE[0]],
-            /* output */state[/* output */2],
-            /* data */state[/* data */3]
+            /* output */state[/* output */3],
+            /* data */state[/* data */4]
           ];
   } else {
     var ocaml$1 = printML(maybeRE[0]);
@@ -104,38 +119,56 @@ function doCompile(state) {
       var match$2 = eval(js.js_code);
       if (match$2 == null) {
         return /* record */[
-                /* textList */state[/* textList */0],
+                /* topLevel */state[/* topLevel */0],
+                /* fnList */state[/* fnList */1],
                 /* error : Some */["Error when evaling code"],
-                /* output */state[/* output */2],
-                /* data */state[/* data */3]
+                /* output */state[/* output */3],
+                /* data */state[/* data */4]
               ];
       } else {
         console.log(match$2);
         return /* record */[
-                /* textList */state[/* textList */0],
+                /* topLevel */state[/* topLevel */0],
+                /* fnList */state[/* fnList */1],
                 /* error : None */0,
-                /* output : Some */[$$Array.map(match$2, state[/* data */3])],
-                /* data */state[/* data */3]
+                /* output : Some */[Curry._1(match$2, state[/* data */4])],
+                /* data */state[/* data */4]
               ];
       }
     } else {
-      var re = new RegExp("This expression has type [a-zA-Z]+ but an expression was expected of type\\s+svgRectT");
-      if (re.test(match$1)) {
-        return /* record */[
-                /* textList */List.rev(/* :: */[
-                      "",
-                      List.rev(state[/* textList */0])
-                    ]),
-                /* error : None */0,
-                /* output */state[/* output */2],
-                /* data */state[/* data */3]
-              ];
+      var param = new RegExp("Unbound value ([a-zA-Z][a-zA-Z1-9_]*)").exec(match$1);
+      if (param !== null) {
+        var match$3 = Caml_array.caml_array_get(param, 1);
+        if (match$3 == null) {
+          return /* record */[
+                  /* topLevel */state[/* topLevel */0],
+                  /* fnList */state[/* fnList */1],
+                  /* error : Some */[match$1],
+                  /* output */state[/* output */3],
+                  /* data */state[/* data */4]
+                ];
+        } else {
+          return /* record */[
+                  /* topLevel */state[/* topLevel */0],
+                  /* fnList : :: */[
+                    /* record */[
+                      /* name */match$3,
+                      /* body */""
+                    ],
+                    state[/* fnList */1]
+                  ],
+                  /* error */state[/* error */2],
+                  /* output */state[/* output */3],
+                  /* data */state[/* data */4]
+                ];
+        }
       } else {
         return /* record */[
-                /* textList */state[/* textList */0],
+                /* topLevel */state[/* topLevel */0],
+                /* fnList */state[/* fnList */1],
                 /* error : Some */[match$1],
-                /* output */state[/* output */2],
-                /* data */state[/* data */3]
+                /* output */state[/* output */3],
+                /* data */state[/* data */4]
               ];
       }
     }
@@ -163,16 +196,28 @@ function createRow(id, row) {
 function make() {
   var newrecord = component.slice();
   newrecord[/* render */9] = (function (self) {
-      var match = self[/* state */2][/* error */1];
-      var match$1 = self[/* state */2][/* output */2];
+      var match = self[/* state */2][/* error */2];
+      var match$1 = self[/* state */2][/* output */3];
       return React.createElement("div", undefined, React.createElement("table", {
                       style: {
                         border: "1px solid black"
                       }
-                    }, React.createElement("thead", undefined, React.createElement("tr", undefined, React.createElement("th", undefined, "width"), React.createElement("th", undefined, "height"), React.createElement("th", undefined, "color"))), React.createElement("tbody", undefined, $$Array.mapi(createRow, self[/* state */2][/* data */3]))), React.createElement("br", undefined), React.createElement("br", undefined), $$Array.mapi((function (i, text) {
+                    }, React.createElement("thead", undefined, React.createElement("tr", undefined, React.createElement("th", undefined, "width"), React.createElement("th", undefined, "height"), React.createElement("th", undefined, "color"))), React.createElement("tbody", undefined, $$Array.mapi(createRow, self[/* state */2][/* data */4]))), React.createElement("br", undefined), "(table) => {", React.createElement("br", undefined), React.createElement("textarea", {
+                      style: {
+                        height: "100px",
+                        marginTop: "5px",
+                        marginLeft: "30px",
+                        width: "300px"
+                      },
+                      name: "textarea",
+                      value: self[/* state */2][/* topLevel */0],
+                      onChange: (function ($$event) {
+                          return handleTopLevel($$event, self);
+                        })
+                    }), React.createElement("br", undefined), "}", React.createElement("br", undefined), React.createElement("br", undefined), $$Array.mapi((function (i, fn) {
                         return React.createElement("div", {
                                     key: String(i)
-                                  }, "(x) => {", React.createElement("br", undefined), React.createElement("textarea", {
+                                  }, "let " + (fn[/* name */0] + " = (x) => {"), React.createElement("br", undefined), React.createElement("textarea", {
                                         style: {
                                           height: "100px",
                                           marginTop: "5px",
@@ -180,12 +225,12 @@ function make() {
                                           width: "300px"
                                         },
                                         name: "textarea",
-                                        value: text,
+                                        value: fn[/* body */1],
                                         onChange: (function ($$event) {
                                             return handleText(i, $$event, self);
                                           })
                                       }), React.createElement("br", undefined), "}", React.createElement("br", undefined));
-                      }), $$Array.of_list(self[/* state */2][/* textList */0])), React.createElement("br", undefined), match ? React.createElement("div", undefined, React.createElement("br", undefined), match[0]) : null, React.createElement("svg", {
+                      }), $$Array.of_list(self[/* state */2][/* fnList */1])), React.createElement("br", undefined), match ? React.createElement("div", undefined, React.createElement("br", undefined), match[0]) : null, React.createElement("svg", {
                       height: "100",
                       width: "100"
                     }, match$1 ? $$Array.mapi((function (i, svgRect) {
@@ -201,8 +246,12 @@ function make() {
     });
   newrecord[/* initialState */10] = (function () {
       return /* record */[
-              /* textList : :: */[
-                "{x: 1, y: 1, w: row.width, h: row.height, c: row.color}",
+              /* topLevel */"Array.map(processRow, table)",
+              /* fnList : :: */[
+                /* record */[
+                  /* name */"processRow",
+                  /* body */"{x: 1, y: 1, w: x.width, h: x.height, c: x.color}"
+                ],
                 /* [] */0
               ],
               /* error : None */0,
@@ -222,45 +271,48 @@ function make() {
             ];
     });
   newrecord[/* reducer */12] = (function (action, state) {
-      if (action.tag) {
-        var textNum = action[0];
-        if (List.length(state[/* textList */0]) === 1) {
-          return /* Update */Block.__(0, [/* record */[
-                      /* textList : :: */[
-                        "",
-                        /* [] */0
-                      ],
-                      /* error */state[/* error */1],
-                      /* output */state[/* output */2],
-                      /* data */state[/* data */3]
-                    ]]);
-        } else {
-          var newTextList = filteri((function (i, _) {
-                  return +(i !== textNum);
-                }), state[/* textList */0]);
-          return /* Update */Block.__(0, [/* record */[
-                      /* textList */newTextList,
-                      /* error */state[/* error */1],
-                      /* output */state[/* output */2],
-                      /* data */state[/* data */3]
-                    ]]);
-        }
-      } else {
-        var text = action[1];
-        var textNum$1 = action[0];
-        var newTextList$1 = List.mapi((function (i, x) {
-                if (i === textNum$1) {
-                  return text;
-                } else {
-                  return x;
-                }
-              }), state[/* textList */0]);
-        return /* Update */Block.__(0, [doCompile(/* record */[
-                        /* textList */newTextList$1,
-                        /* error */state[/* error */1],
-                        /* output */state[/* output */2],
-                        /* data */state[/* data */3]
-                      ])]);
+      switch (action.tag | 0) {
+        case 0 : 
+            var text = action[1];
+            var textNum = action[0];
+            var newFnList = List.mapi((function (i, fn) {
+                    if (i === textNum) {
+                      return /* record */[
+                              /* name */fn[/* name */0],
+                              /* body */text
+                            ];
+                    } else {
+                      return fn;
+                    }
+                  }), state[/* fnList */1]);
+            return /* Update */Block.__(0, [doCompile(/* record */[
+                            /* topLevel */state[/* topLevel */0],
+                            /* fnList */newFnList,
+                            /* error */state[/* error */2],
+                            /* output */state[/* output */3],
+                            /* data */state[/* data */4]
+                          ])]);
+        case 1 : 
+            return /* Update */Block.__(0, [doCompile(/* record */[
+                            /* topLevel */action[0],
+                            /* fnList */state[/* fnList */1],
+                            /* error */state[/* error */2],
+                            /* output */state[/* output */3],
+                            /* data */state[/* data */4]
+                          ])]);
+        case 2 : 
+            var textNum$1 = action[0];
+            var newFnList$1 = filteri((function (i, _) {
+                    return +(i !== textNum$1);
+                  }), state[/* fnList */1]);
+            return /* Update */Block.__(0, [doCompile(/* record */[
+                            /* topLevel */state[/* topLevel */0],
+                            /* fnList */newFnList$1,
+                            /* error */state[/* error */2],
+                            /* output */state[/* output */3],
+                            /* data */state[/* data */4]
+                          ])]);
+        
       }
     });
   return newrecord;
@@ -268,10 +320,11 @@ function make() {
 
 exports.filteri = filteri;
 exports.component = component;
+exports.handleTopLevel = handleTopLevel;
 exports.handleText = handleText;
 exports.preamble = preamble;
-exports.processRow = processRow;
 exports.wrapFunction = wrapFunction;
+exports.suffix = suffix;
 exports.doCompile = doCompile;
 exports.createRow = createRow;
 exports.make = make;

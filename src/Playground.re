@@ -8,8 +8,11 @@ type rowT = {
 
 type svgRectT = {x: int, y: int, w: int, h: int, c: string};
 
+type fnT = {name: string, body: string};
+
 type state = {
-  textList: list(string),
+  topLevel: string,
+  fnList: list(fnT),
   error: option(string),
   output: option(array(svgRectT)),
   data: array(rowT),
@@ -17,6 +20,7 @@ type state = {
 
 type action =
   | UpdateAndCompile(int, string)
+  | UpdateTopLevelAndCompile(string)
   | DeleteTextBox(int);
 
 let filteri = (f, lst) => {
@@ -31,6 +35,12 @@ let filteri = (f, lst) => {
 };
 
 let component = ReasonReact.reducerComponent("Page");
+
+let handleTopLevel = (event, self) => {
+  let target = ReactDOMRe.domElementToObj(ReactEventRe.Form.target(event));
+  let content: string = target##value;
+  self.ReasonReact.send(UpdateTopLevelAndCompile(content))
+};
 
 let handleText = (codeNum, event, self) => {
   let target = ReactDOMRe.domElementToObj(ReactEventRe.Form.target(event));
@@ -50,30 +60,26 @@ type compiledJS;
 [@bs.scope "ocaml"] [@bs.val] external ocamlToJS : string => compiledJS = "compile";
 [@bs.get] external getJSCode : compiledJS => string = "js_code";
 [@bs.get] [@bs.return nullable] external getJSError : compiledJS => option(string) = "js_error_msg";
-type processRowT = rowT => svgRectT;
+/* type processRowT = rowT => svgRectT; */
+type processRowT = array(rowT) => array(svgRectT);
 [@bs.val] [@bs.return nullable] external evalJS : string => option(processRowT) = "eval";
 
 let preamble = {|
 type rowT = {width: int, height: int, color: string};
 type svgRectT = {x: int, y: int, w: int, h: int, c: string};
-let processRow = (row: rowT) : svgRectT => { row
 |};
+/* let processRow = (row: rowT) : svgRectT => { row */
 
 
-let processRow = (row) => {
-  row
-    |> (x) => {1}
-    |> (x) => {2}
-    |> (x) => {4}
-};
+let wrapFunction = (fn) => Printf.sprintf("let %s = (x) => {%s};", fn.name, fn.body);
 
-let wrapFunction = (body) => Printf.sprintf("|> ((x) => {%s})", body);
+let suffix = (topLevel) => "\nlet processTable = (table: array(rowT)) : array(svgRectT) => {" ++ topLevel ++ "}";
 
 let doCompile = (state) => {
   print_endline("Compiling...");
-  let reason_code = String.concat("\n", List.map(wrapFunction, state.textList));
-  let wrapped_code = preamble ++ reason_code ++ "}";
-  /* print_endline(wrapped_code); */
+  let reason_code = String.concat("\n", List.map(wrapFunction, state.fnList));
+  let wrapped_code = preamble ++ reason_code ++ suffix(state.topLevel);
+  print_endline(wrapped_code);
   let maybeRE = try (Ok(parseRE(wrapped_code))) {
     | Js.Exn.Error(e) =>
       switch (Js.Exn.message(e)) {
@@ -88,18 +94,23 @@ let doCompile = (state) => {
       let js = ocamlToJS(ocaml);
       switch(getJSError(js)){
         | Some(error) =>
-          let re = Js.Re.fromString("This expression has type [a-zA-Z]+ but an expression was expected of type\\s+svgRectT");
-          if (Js.Re.test(error, re)){
-            {...state, error: None, textList: List.rev(["", ...List.rev(state.textList)])}
-          } else {
-            {...state, error: Some(error)}
-          }
+        Js.Re.fromString("Unbound value ([a-zA-Z][a-zA-Z1-9_]*)")
+          |> Js.Re.exec(error)
+          |> (
+            fun
+            | Some(result) => switch(Js.Nullable.to_opt(Js.Re.captures(result)[1])){
+              | Some(fnName) => {...state, fnList: [{name:fnName, body: ""}, ...state.fnList]}
+              /* print_endline("NAME::::" ++ fnName); state */
+              | None => {...state, error: Some(error)}
+              }
+            | None => {...state, error: Some(error)}
+          );
         | None =>
             /* print_endline(getJSCode(js)); */
             switch (evalJS(getJSCode(js))){
               | None => {...state, error: Some("Error when evaling code")}
               | Some(processRow) => Js.log(processRow);
-              {...state, output: Some(Array.map(processRow, state.data)), error: None}
+              {...state, output: Some(processRow(state.data)), error: None}
             }
       }
 
@@ -118,7 +129,8 @@ let createRow = (id, row: rowT) : ReasonReact.reactElement => {
 let make = (_children) => {
   ...component,
   initialState: () => {
-    textList: ["{x: 1, y: 1, w: row.width, h: row.height, c: row.color}"],
+    topLevel: "Array.map(processRow, table)",
+    fnList: [{name: "processRow", body: "{x: 1, y: 1, w: x.width, h: x.height, c: x.color}"}],
     error: None,
     output: None,
     data: [|
@@ -128,15 +140,13 @@ let make = (_children) => {
   reducer: (action, state) =>
     switch (action) {
     | UpdateAndCompile(textNum, text : string) =>
-        let newTextList : list(string) = List.mapi((i, x) => if (i === textNum) {text} else {x}, state.textList);
-        ReasonReact.Update(doCompile({...state, textList: newTextList}));
+        let newFnList = List.mapi((i, fn) => if (i === textNum) {...fn, body: text} else fn, state.fnList);
+        ReasonReact.Update(doCompile({...state, fnList: newFnList}));
+    | UpdateTopLevelAndCompile(text : string) =>
+        ReasonReact.Update(doCompile({...state, topLevel: text}));
     | DeleteTextBox(textNum) =>
-        if (List.length(state.textList) === 1){
-          ReasonReact.Update({...state, textList: [""]});
-        } else {
-          let newTextList : list(string) = filteri((i, x) => i !== textNum, state.textList);
-          ReasonReact.Update({...state, textList: newTextList});
-        }
+        let newFnList = filteri((i, x) => i !== textNum, state.fnList);
+        ReasonReact.Update(doCompile({...state, fnList: newFnList}));
     },
   render: self =>
     <div>
@@ -153,20 +163,29 @@ let make = (_children) => {
       </tbody>
       </table>
       <br/>
+        (ReasonReact.stringToElement("(table) => {"))
+        <br/>
+        <textarea name="textarea"
+            style=ReactDOMRe.Style.make(~marginLeft="30px", ~marginTop="5px", ~height="100px", ~width="300px", ())
+            value={self.state.topLevel}
+            onChange=(event => handleTopLevel(event, self)) ></textarea>
+        <br/>
+        (ReasonReact.stringToElement("}"))
+        <br/>
       <br/>
-      (ReasonReact.arrayToElement(Array.mapi((i, text) => (
+      (ReasonReact.arrayToElement(Array.mapi((i, fn) => (
         <div key=string_of_int(i)>
-          (ReasonReact.stringToElement("(x) => {"))
+          (ReasonReact.stringToElement("let " ++ fn.name ++ " = (x) => {"))
           <br/>
           <textarea name="textarea"
               style=ReactDOMRe.Style.make(~marginLeft="30px", ~marginTop="5px", ~height="100px", ~width="300px", ())
-              value={text}
+              value={fn.body}
               onChange=(event => handleText(i, event, self)) ></textarea>
           <br/>
           (ReasonReact.stringToElement("}"))
           <br/>
         </div>
-        ), Array.of_list(self.state.textList))))
+        ), Array.of_list(self.state.fnList))))
       <br/>
       (switch (self.state.error) {
         | None => ReasonReact.nullElement
