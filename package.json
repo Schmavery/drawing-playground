@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node-http-server",
     "start-build": "bsb -make-world -w",
+    "pack": "browserify src/Index.js -o website.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -20,7 +21,8 @@
   "homepage": "https://github.com/Schmavery/drawing-playground#readme",
   "devDependencies": {
     "bs-platform": "^2.2.3",
-    "node-http-server": "^8.1.2"
+    "node-http-server": "^8.1.2",
+    "browserify": "*"
   },
   "dependencies": {
     "reason-react": "^0.3.4"

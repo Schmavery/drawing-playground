@@ -1,3 +1,5 @@
+type resultT('a, 'b) = Ok('a) | Error('b);
+
 type rowT = {
   width: int,
   height: int,
@@ -7,32 +9,44 @@ type rowT = {
 type svgRectT = {x: int, y: int, w: int, h: int, c: string};
 
 type state = {
-  text: string,
+  textList: list(string),
   error: option(string),
   output: option(array(svgRectT)),
   data: array(rowT),
 };
 
-/*width, height, color*/
-
 type action =
-  | UpdateText(string)
-  | Compile
-  | Reformat;
+  | UpdateAndCompile(int, string)
+  | DeleteTextBox(int);
+
+let filteri = (f, lst) => {
+  let (_, lst) = List.fold_left(((i, l), v) => {
+        if (f(i, v)) {
+          (i + 1, [v, ...l])
+        } else {
+          (i + 1, l)
+        }
+      }, (0, []), lst);
+  lst
+};
 
 let component = ReasonReact.reducerComponent("Page");
 
-
-let handleText = (event, self) => {
+let handleText = (codeNum, event, self) => {
   let target = ReactDOMRe.domElementToObj(ReactEventRe.Form.target(event));
   let content: string = target##value;
-  self.ReasonReact.send(UpdateText(content))
+  if (content == "") {
+    self.ReasonReact.send(DeleteTextBox(codeNum))
+  } else {
+    self.ReasonReact.send(UpdateAndCompile(codeNum, content))
+  }
 };
 
+type ocamlAST;
 type compiledJS;
-[@bs.val] external parseRE : string => string = "";
-[@bs.val] external printRE : string => string = "";
-[@bs.val] external printML : string => string = "";
+[@bs.val] external parseRE : string => ocamlAST = "";
+[@bs.val] external printRE : ocamlAST => string = "";
+[@bs.val] external printML : ocamlAST => string = "";
 [@bs.scope "ocaml"] [@bs.val] external ocamlToJS : string => compiledJS = "compile";
 [@bs.get] external getJSCode : compiledJS => string = "js_code";
 [@bs.get] [@bs.return nullable] external getJSError : compiledJS => option(string) = "js_error_msg";
@@ -42,22 +56,54 @@ type processRowT = rowT => svgRectT;
 let preamble = {|
 type rowT = {width: int, height: int, color: string};
 type svgRectT = {x: int, y: int, w: int, h: int, c: string};
-let processRow = (row) => {
+let processRow = (row: rowT) : svgRectT => { row
 |};
+
+
+let processRow = (row) => {
+  row
+    |> (x) => {1}
+    |> (x) => {2}
+    |> (x) => {4}
+};
+
+let wrapFunction = (body) => Printf.sprintf("|> ((x) => {%s})", body);
 
 let doCompile = (state) => {
   print_endline("Compiling...");
-  let reason_code = state.text;
+  let reason_code = String.concat("\n", List.map(wrapFunction, state.textList));
   let wrapped_code = preamble ++ reason_code ++ "}";
-  let ocaml = printML(parseRE(wrapped_code));
-  let js = ocamlToJS(ocaml);
-  switch(getJSError(js)){
-    | Some(error) => {...state, error: Some(error)}
-    | None =>
-        switch (evalJS(getJSCode(js))){
-          | None => {...state, error: Some("Error when evaling code")}
-          | Some(processRow) => {...state, output: Some(Array.map(processRow, state.data))}
+  /* print_endline(wrapped_code); */
+  let maybeRE = try (Ok(parseRE(wrapped_code))) {
+    | Js.Exn.Error(e) =>
+      switch (Js.Exn.message(e)) {
+        | Some(message) => Error(message)
+        | None => Error("Unknown reason parsing error")
         }
+  };
+  switch (maybeRE) {
+    | Ok(ocamlAST) =>
+      let ocaml = printML(ocamlAST);
+      /* print_endline(ocaml); */
+      let js = ocamlToJS(ocaml);
+      switch(getJSError(js)){
+        | Some(error) =>
+          let re = Js.Re.fromString("This expression has type [a-zA-Z]+ but an expression was expected of type\\s+svgRectT");
+          if (Js.Re.test(error, re)){
+            {...state, error: None, textList: List.rev(["", ...List.rev(state.textList)])}
+          } else {
+            {...state, error: Some(error)}
+          }
+        | None =>
+            /* print_endline(getJSCode(js)); */
+            switch (evalJS(getJSCode(js))){
+              | None => {...state, error: Some("Error when evaling code")}
+              | Some(processRow) => Js.log(processRow);
+              {...state, output: Some(Array.map(processRow, state.data)), error: None}
+            }
+      }
+
+    | Error(msg) => {...state, error: Some(msg)}
   }
 };
 
@@ -72,7 +118,7 @@ let createRow = (id, row: rowT) : ReasonReact.reactElement => {
 let make = (_children) => {
   ...component,
   initialState: () => {
-    text: "{x: 1, y: 1, w: row.width, h: row.height, c: row.color}",
+    textList: ["{x: 1, y: 1, w: row.width, h: row.height, c: row.color}"],
     error: None,
     output: None,
     data: [|
@@ -81,11 +127,16 @@ let make = (_children) => {
     |]},
   reducer: (action, state) =>
     switch (action) {
-    | UpdateText(newText) => ReasonReact.Update({...state, text: newText})
-    | Compile => {
-      ReasonReact.Update(doCompile(state));
-    }
-    | Reformat => ReasonReact.Update({...state, text: printRE(parseRE(state.text))})
+    | UpdateAndCompile(textNum, text : string) =>
+        let newTextList : list(string) = List.mapi((i, x) => if (i === textNum) {text} else {x}, state.textList);
+        ReasonReact.Update(doCompile({...state, textList: newTextList}));
+    | DeleteTextBox(textNum) =>
+        if (List.length(state.textList) === 1){
+          ReasonReact.Update({...state, textList: [""]});
+        } else {
+          let newTextList : list(string) = filteri((i, x) => i !== textNum, state.textList);
+          ReasonReact.Update({...state, textList: newTextList});
+        }
     },
   render: self =>
     <div>
@@ -103,20 +154,20 @@ let make = (_children) => {
       </table>
       <br/>
       <br/>
-      (ReasonReact.stringToElement("(row) => {"))
+      (ReasonReact.arrayToElement(Array.mapi((i, text) => (
+        <div key=string_of_int(i)>
+          (ReasonReact.stringToElement("(x) => {"))
+          <br/>
+          <textarea name="textarea"
+              style=ReactDOMRe.Style.make(~marginLeft="30px", ~marginTop="5px", ~height="100px", ~width="300px", ())
+              value={text}
+              onChange=(event => handleText(i, event, self)) ></textarea>
+          <br/>
+          (ReasonReact.stringToElement("}"))
+          <br/>
+        </div>
+        ), Array.of_list(self.state.textList))))
       <br/>
-      <textarea name="textarea" style=ReactDOMRe.Style.make(~marginLeft="30px", ~marginTop="5px", ~height="100px", ~width="300px", ()) value={self.state.text}
-          onChange=(event => handleText(event, self)) ></textarea>
-      <br/>
-      (ReasonReact.stringToElement("}"))
-      <br/>
-      <br/>
-      <button onClick=(_event => self.send(Compile))>
-        (ReasonReact.stringToElement("Compile"))
-      </button>
-      <button onClick=(_event => self.send(Reformat))>
-        (ReasonReact.stringToElement("Reformat"))
-      </button>
       (switch (self.state.error) {
         | None => ReasonReact.nullElement
         | Some(error) => <div><br />(ReasonReact.stringToElement(error))</div>
@@ -124,8 +175,9 @@ let make = (_children) => {
       <svg width="100" height="100">
         (switch (self.state.output) {
           | None => ReasonReact.nullElement
-          | Some(output) => ReasonReact.arrayToElement(Array.map((svgRect) =>
+          | Some(output) => ReasonReact.arrayToElement(Array.mapi((i, svgRect) =>
           (<rect
+              key=string_of_int(i)
               width=string_of_int(svgRect.w)
               height=string_of_int(svgRect.h)
               style=ReactDOMRe.Style.make(~fill=svgRect.c, ()) />), output))
